@@ -7,21 +7,12 @@ from scrapy.spiders import CrawlSpider, Rule
 class RyansLaptopsSpider(CrawlSpider):
     name = "ryans_laptops"
     allowed_domains = ["ryans.com"]
-    start_urls = ["https://www.ryans.com/category/laptop-all-laptop"]
+    start_urls = ["https://www.ryans.com/category/laptop-all-laptop?limit=100"]
 
     rules = (
         Rule(LinkExtractor(allow=r"https://www.ryans.com/[^/]+-laptop$"), callback="parse_product", follow=False),
-        Rule(LinkExtractor(allow=r"page=\d+"), callback="parse_category", follow=True, process_request="limit_pages"),
+        Rule(LinkExtractor(allow=r"limit=100&page=\d+"), callback="parse_category", follow=True),
     )
-
-    def limit_pages(self, request, response):
-        page_num = int(request.url.split("page=")[-1]) if "page=" in request.url else 1
-        if page_num > 2:
-            self.logger.info(f"Stopping pagination at page {page_num} (limit reached)")
-            return None
-        self.logger.info(f"Following pagination to page {page_num}")
-        return request
-
     def parse_category(self, response):
         self.logger.info(f"Parsing category page: {response.url}")
         cards = response.xpath("//div[contains(@class, 'card') and contains(@class, 'h-100')]")
@@ -47,11 +38,10 @@ class RyansLaptopsSpider(CrawlSpider):
             "out_of_stock": False,  # Default to False
         }
         self._extract_emi_tooltip(response, product)
+        # breakpoint()
 
         # Check stock status
-        stock_status = response.xpath(
-            "//span[contains(@class, 'stock-out') or contains(text(), 'Out of Stock') or contains(text(), 'Currently unavailable')]"
-        ).get()
+        stock_status = response.xpath("//span[contains(text(), 'Out Of Stock')]").get()
         if stock_status or (not product["price"] and not product["emi_plans"]):
             product["out_of_stock"] = True
             self.logger.info(f"Product marked as out of stock: {response.url}")

@@ -37,7 +37,7 @@ BOT_NAME = "ryans_laptops_lite"
 SPIDER_MODULES = ["ryans_scraper.spiders"]  # Without it Scrapy won't find our spiders
 
 USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
-# LOG_LEVEL = "DEBUG"  # Detailed logging
+LOG_LEVEL = "DEBUG"
 LOG_ENABLED = True
 CONCURRENT_REQUESTS = 16  # Moderate concurrency
 DOWNLOAD_DELAY = 1  # Avoid overwhelming server
@@ -45,15 +45,25 @@ AUTOTHROTTLE_ENABLED = True  # Prevent bans
 AUTOTHROTTLE_TARGET_CONCURRENCY = 1.0
 ROBOTSTXT_OBEY = True  # Respect robots.txt
 
-FEEDS = {
-    "laptops_lite.json": {
-        "format": "json",
-        "overwrite": True,
-    }
-}
+# FEEDS = {
+#     "laptops_lite.json": {
+#         "format": "json",
+#         "overwrite": True,
+#     }
+# }
 
 EXTENSIONS = {
     "ryans_scraper.extensions.runtime_extension.RuntimeLogger": 500,
 }
 
 RUNTIME_LOGGER_ENABLED = True
+
+DOWNLOADER_MIDDLEWARES = {
+    "ryans_scraper.middlewares.UserAgentRotatorMiddleware": 543,
+    "ryans_scraper.middlewares.CustomRetryMiddleware": 550,
+}
+
+ITEM_PIPELINES = {
+    "ryans_scraper.pipelines.LaptopValidationPipeline": 300,
+    "ryans_scraper.pipelines.JsonExportPipeline": 400,
+}
