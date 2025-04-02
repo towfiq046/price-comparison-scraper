@@ -1,4 +1,5 @@
 import json
+import os
 import logging
 from datetime import datetime
 
@@ -14,7 +15,7 @@ class LaptopValidationPipeline:
 
     def __init__(self):
         self.logger = logging.getLogger(__name__)
-        self.seen_urls = set()  # Track URLs to remove duplicates
+        self.seen_urls = set()
 
     @classmethod
     def from_crawler(cls, crawler):
@@ -22,20 +23,14 @@ class LaptopValidationPipeline:
 
     def process_item(self, item, spider):
         """
-        Process an item by checking for duplicates, registering its URL, and validating its price.
-
-        Args:
-            item: The scraped LaptopItem.
-            spider: The spider instance processing the item.
-            
-        Returns:
-            The processed item.
-        
-        Raises:
-            DropItem: If a duplicate URL is detected.
+        Process an item by checking the URL, verifying duplicate entries
+        and validating price information.
         """
         adapter = ItemAdapter(item)
         url = adapter.get("url")
+
+        if not url:
+            raise DropItem(f"Missing URL in item: {item}")
 
         self._check_duplicate(url)
         self.seen_urls.add(url)
@@ -44,51 +39,41 @@ class LaptopValidationPipeline:
         return item
 
     def _check_duplicate(self, url):
-        """
-        Check if a URL has already been processed; drops the item if so.
-
-        Args:
-            url: The URL to check.
-
-        Raises:
-            DropItem: If the URL is already in the seen set.
-        """
+        """Check if the URL is already processed and raise DropItem if found."""
         if url in self.seen_urls:
             self.logger.debug(f"Duplicate item dropped: {url}")
             raise DropItem(f"Duplicate item found: {url}")
 
     def _validate_price(self, adapter, url):
-        """
-        Validate and convert the price field.
-
-        This method removes any commas from the price string and converts it
-        to a float. If the conversion fails or the price is missing, a warning is logged.
-
-        Args:
-            adapter: The ItemAdapter for the current item.
-            url: The item's URL (used for logging).
-        """
-        price = adapter.get("price")
-        if price:
+        """Validate the price field (assumes cleaning done by ItemLoader)."""
+        price_str = adapter.get("price")
+        if price_str:
             try:
-                # Remove commas if any and convert to float
-                adapter["price"] = float(price.replace(",", ""))
+                adapter["price"] = float(price_str)
             except ValueError:
-                self.logger.warning(f"Invalid price '{price}' for {url}. Setting to None.")
+                original_price_before_validation = adapter.item.get("price", "N/A")
+                self.logger.warning(
+                    f"Invalid price format '{original_price_before_validation}' for url '{url}'. Setting to None."
+                )
                 adapter["price"] = None
         else:
-            self.logger.warning(f"Missing price for {url}")
+            # Price was missing or became empty after cleaning
+            self.logger.warning(f"Missing or empty price after cleaning for url '{url}'")
+            # Ensure it's None if it was an empty string
+            adapter["price"] = None
 
 
-class JsonExportPipeline:
+class JsonLinesExportPipeline:
     """
-    Pipeline to export collected items to a JSON file with a timestamp.
-    It gathers all scraped items and writes them to disk when the spider closes.
+    Pipeline to export collected items incrementally to a JSON Lines file.
+    Each responsibility (directory management, file handling, serialization, writing)
+    is handled more distinctly.
     """
 
     def __init__(self):
         self.logger = logging.getLogger(__name__)
-        self.items = []
+        self.file_handle = None  # File handle for writing
+        self.filename = None  # Store filename for logging clarity
 
     @classmethod
     def from_crawler(cls, crawler):
@@ -97,60 +82,80 @@ class JsonExportPipeline:
     def open_spider(self, spider):
         """
         Called when the spider starts.
-
-        Logs that the JSON export pipeline has started.
+        Generates filename, ensures directory exists, and opens the file handle.
         """
-        self.logger.info("JSON export pipeline started.")
+        self.filename = self._generate_filename()
+        output_dir = os.path.dirname(self.filename)
+
+        if not self._ensure_output_directory_exists(output_dir):
+            self.logger.error("Export directory could not be created or verified. Pipeline will not write.")
+            return
+
+        try:
+            self.file_handle = open(self.filename, "w", encoding="utf-8")
+            self.logger.info(f"JSON Lines export pipeline started. Writing to: {self.filename}")
+        except OSError as e:
+            self.logger.error(f"Could not open file {self.filename} for writing. Error: {e}")
+            self.file_handle = None
 
     def process_item(self, item, spider):
         """
-        Collect each scraped item for later export.
-
-        Args:
-            item: The scraped item.
-            spider: The spider that produced the item.
-
-        Returns:
-            The unmodified item.
+        Processes an item: serializes it and writes the resulting line to the file.
+        Checks if the pipeline is in a valid state to write.
         """
-        self.items.append(ItemAdapter(item).asdict())
-        return item
+        if not self.file_handle:
+            self.logger.warning(
+                f"Export file '{self.filename}' not open. Skipping item: {ItemAdapter(item).get('url', 'N/A')}"
+            )
+            return item  # Allow item to pass to other pipelines if any
 
-    def _generate_filename(self):
-        """
-        Generate a human-readable filename for the export JSON file.
+        json_string = self._serialize_item(item)
 
-        Returns:
-            A string in the format 'laptops_lite_YYYY-MM-DD_HH-MM-SS.json'.
-        """
-        timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-        return f"laptops_lite_{timestamp}.json"
+        if json_string is not None:
+            self._write_line(json_string)
 
-    def _write_items_to_file(self, filename):
-        """
-        Write the collected items to a JSON file.
-
-        Args:
-            filename: The name of the file to write.
-
-        Side effects:
-            Writes a JSON file containing all collected items.
-        """
-        with open(filename, "w", encoding="utf-8") as f:
-            json.dump(self.items, f, indent=2)
-        self.logger.info(f"Saved {len(self.items)} items to {filename}")
+        return item  # Always return item for pipeline chain
 
     def close_spider(self, spider):
         """
-        Called when the spider is closed; exports all collected items to a JSON file.
-
-        Args:
-            spider: The spider instance that has finished running.
-
-        Side effects:
-            - Generates a timestamped filename.
-            - Writes the collected items to the file.
-            - Logs the number of items saved.
+        Called when the spider is closed; closes the export file handle.
         """
-        filename = self._generate_filename()
-        self._write_items_to_file(filename)
+        if self.file_handle:
+            self.file_handle.close()
+            self.logger.info(f"JSON Lines export pipeline finished. File '{self.filename}' closed.")
+        elif self.filename:
+            self.logger.warning(f"JSON Lines export file '{self.filename}' was not open during close_spider.")
+
+    def _generate_filename(self):
+        """Generates a unique, timestamped filename for the export."""
+        output_dir = "output"
+        timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+        return os.path.join(output_dir, f"export_{timestamp}.jsonl")
+
+    def _ensure_output_directory_exists(self, directory_path):
+        """Checks if the output directory exists and creates it if necessary."""
+        if directory_path and not os.path.exists(directory_path):
+            try:
+                os.makedirs(directory_path)
+                self.logger.info(f"Created output directory: {directory_path}")
+                return True
+            except OSError as e:
+                self.logger.error(f"Could not create output directory {directory_path}. Error: {e}")
+                return False
+        return True
+
+    def _serialize_item(self, item):
+        """Serializes a single Scrapy item to a JSON string."""
+        try:
+            # Adapting and dumping are part of the serialization responsibility
+            return json.dumps(ItemAdapter(item).asdict())
+        except TypeError as e:
+            self.logger.error(f"Failed to serialize item to JSON: {e}. Item: {item}")
+            return None  # Indicate serialization failure
+
+    def _write_line(self, line):
+        """Writes a single line string (already serialized) to the file."""
+        try:
+            self.file_handle.write(line + "\n")
+        except OSError as e:
+            self.logger.error(f"Failed to write line to file {self.filename}: {e}. Line: {line[:100]}...")

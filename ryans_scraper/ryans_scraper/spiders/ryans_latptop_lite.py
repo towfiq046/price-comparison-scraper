@@ -46,8 +46,8 @@ class RyansLaptopsSpider(CrawlSpider):
         loader = ItemLoader(item=LaptopItem(), selector=card)
 
         loader.add_xpath("url", self.IMAGE_BOX_XPATH)
-        loader.add_xpath("name", self.NAME_XPATH, default="")
-        loader.add_xpath("price", self.PRICE_XPATH, default="")
+        loader.add_xpath("name", self.NAME_XPATH)
+        loader.add_xpath("price", self.PRICE_XPATH)
         loader.add_xpath("image", self.IMAGE_XPATH)
 
         product = loader.load_item()

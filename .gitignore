@@ -12,3 +12,9 @@ wheels/
 # Lock files
 uv.lock
 .vscode/
+
+# Output directory (ignore generated output files)
+output/
+
+# Scrapy directory (ignore cached scrapy data)
+.scrapy/
