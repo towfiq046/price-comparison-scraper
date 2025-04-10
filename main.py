@@ -1,5 +1,5 @@
 def main():
-    print("Hello from price-comparision!")
+    print("Hello from price-comparison!")
 
 
 if __name__ == "__main__":
