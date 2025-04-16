@@ -35,54 +35,80 @@ class DropDuplicatesPipeline:
             self.logger.warning(f"Item missing duplicate key field '{key_field}'...")
             return item
 
-        item_key = (key_field, key_value)
+        item_key_tuple = (key_field, key_value)
 
-        if item_key in self.keys_seen:
-            raise DropItem(f"Duplicate item found based on field '{key_field}': {key_value}")
+        if item_key_tuple in self.keys_seen:
+            drop_msg = f"Duplicate item found based on field '{key_field}': {key_value}"
+            self.logger.warning(f"DROP DUPLICATE: {drop_msg}")
+            # --- End Log ---
+            raise DropItem(drop_msg)
         else:
-            self.keys_seen.add(item_key)
+            self.keys_seen.add(item_key_tuple)
             return item
 
 
 class RequiredFieldsPipeline:
     """
-    Drops items missing essential fields or having invalid critical data.
-    Fields to check should be defined per spider.
+    Drops items missing essential fields. Warns about missing optional-but-important fields.
     """
 
-    REQUIRED_FIELDS_MAP = {
-        "ryans_product_details": ["name", "price", "url", "sku", "availability", "specifications"],
-        "startech_product_details": ["name", "price", "url", "availability", "product_code", "brand", "specifications"],
+    # Define strictly essential fields that MUST cause a drop if missing
+    ESSENTIAL_FIELDS_MAP = {
+        "ryans_product_details": ["name", "price", "url", "sku", "availability", "brand"],
+        "startech_product_details": ["name", "price", "url", "availability", "product_code", "brand"],
+    }
+    # Define fields that are important but shouldn't cause a drop if missing
+    IMPORTANT_FIELDS_MAP = {
+        "ryans_product_details": ["specifications"],
+        "startech_product_details": ["specifications"],
     }
 
     def __init__(self):
         self.logger = logging.getLogger(__name__)
 
     def process_item(self, item, spider):
-        required_fields = self.REQUIRED_FIELDS_MAP.get(spider.name, [])
-        if not required_fields:
-            return item
+        essential_fields = self.ESSENTIAL_FIELDS_MAP.get(spider.name, [])
+        important_fields = self.IMPORTANT_FIELDS_MAP.get(spider.name, [])
 
         adapter = ItemAdapter(item)
-        missing = [field for field in required_fields if not adapter.get(field)]
 
-        if "specifications" in required_fields and not isinstance(adapter.get("specifications"), dict):
-            missing.append("specifications (must be dict)")
-        elif "specifications" in required_fields and not adapter.get("specifications"):
-            missing.append("specifications (must not be empty)")
+        # --- Check Essential Fields ---
+        missing_essential = [field for field in essential_fields if not adapter.get(field)]
+        if "price" in essential_fields and (adapter.get("price") is None or adapter["price"] <= 0):
+            missing_essential.append("price (invalid/missing)")
 
-        if missing:
-            msg = f"Missing/Invalid fields: {', '.join(missing)} in item from spider '{spider.name}' ({adapter.get('url') or adapter.get('name', 'N/A')})"
+        if missing_essential:
+            msg = f"DROP: Missing essential fields: {', '.join(missing_essential)} in item from spider '{spider.name}' ({adapter.get('url') or adapter.get('name', 'N/A')})"
             self.logger.warning(msg)
-            raise DropItem(msg)
+            raise DropItem(msg)  # Drop items missing essential data
 
-        price = adapter.get("price")
-        if "price" in required_fields and (price is None or price <= 0):
-            msg = f"Invalid or missing price ({price}) in item from spider '{spider.name}' ({adapter.get('url') or adapter.get('name', 'N/A')})"
-            self.logger.warning(msg)
-            raise DropItem(msg)
+        # --- Check Important (but not critical) Fields ---
+        missing_important = []
+        for field in important_fields:
+            value = adapter.get(field)
+            if value is None:  # Check for None explicitly
+                missing_important.append(f"{field} (None)")
+            # Specific check for specifications dictionary
+            elif field == "specifications" and not isinstance(value, dict):
+                missing_important.append(f"{field} (not dict)")
+            elif field == "specifications" and not value:  # Check if dict is empty
+                missing_important.append(f"{field} (empty dict)")
 
-        return item
+        if missing_important:
+            # Log a warning but DO NOT drop the item
+            self.logger.warning(
+                f"WARN: Missing important fields: {', '.join(missing_important)} in item from spider '{spider.name}' "
+                f"({adapter.get('url') or adapter.get('name', 'N/A')})"
+            )
+            # Ensure specifications field is None if it failed checks, helps downstream processing
+            if (
+                "specifications (not dict)" in missing_important
+                or "specifications (empty dict)" in missing_important
+                or "specifications (None)" in missing_important
+            ):
+                adapter["specifications"] = None
+
+        return item  # Always return item after checks
 
 
 class JsonLinesExportPipeline:

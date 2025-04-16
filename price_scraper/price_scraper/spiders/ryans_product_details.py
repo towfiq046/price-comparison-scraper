@@ -142,26 +142,75 @@ class RyansProductDetailsSpider(scrapy.Spider):
         loader.add_css("key_features", "div.overview ul.category-info li.context::text")
         loader.add_css("image_urls", "div#slideshow-items-container img.slideshow-items::attr(src)")
 
-        # Specifications (Parsing remains the same)
+        # --- Description Section ---
+        description_html_content = response.css("div.spec-details div.card-body.details-tab").get()
+        if description_html_content:
+            loader.add_value("description_html", description_html_content)
+        else:
+            self.logger.debug(f"No description section ('div.spec-details') found on {response.url}")
+
+        # --- Parse Specifications (Updated Logic) ---
         specs = {}
-        spec_rows = response.css("div#add-spec-div div.row.table-hr-remove")
+        spec_rows = []  # Initialize as empty list
+
+        # --- Check Known Container Selectors in Order of Preference/Likelihood ---
+        # 1. Try the hidden div structure (likely most common for complex products)
+        container_selector_1 = response.css("div#add-spec-div")
+        if container_selector_1:
+            spec_rows = container_selector_1.css("div.row.table-hr-remove")
+            # Fallback within this structure if add-spec-div has no rows
+            if not spec_rows:
+                basic_container = response.css("div#basic-spec-div")
+                if basic_container:
+                    spec_rows = basic_container.css("div.row.table-hr-remove")
+            self.logger.debug(f"Found specs using #add-spec-div/#basic-spec-div on {response.url}")
+
+        # 2. If the first structure wasn't found OR yielded no rows, try the alternative table structure
         if not spec_rows:
-            spec_rows = response.css("div#basic-spec-div div.row.table-hr-remove")
-        for row in spec_rows:
-            key_list = row.css("span.att-title::text").getall()
-            value_list = row.css("span.att-value::text").getall()
-            key = clean_text(" ".join(key_list)) if key_list else None
-            value = clean_text(" ".join(value_list)) if value_list else None
-            if key and value:
-                specs[key] = value
+            container_selector_2 = response.css("div.specification-table div.grid-container")  # Target the inner grid
+            if container_selector_2:
+                # The rows seem to be nested differently here
+                spec_rows = container_selector_2.css("div.row.table-hr-remove")
+                self.logger.debug(f"Found specs using div.specification-table structure on {response.url}")
+
+        # --- Process the found rows (if any) ---
+        if spec_rows:
+            current_section = "General"  # Default/Fallback section name
+            for row in spec_rows:
+                # Check for section heading first within this row's structure
+                # The heading is in a parent div: row justify-content-center
+                heading_div = row.xpath(
+                    './ancestor::div[contains(@class, "justify-content-center")][1]/div[contains(@class, "col-lg-2")]/div/h6'
+                )
+                if heading_div:
+                    heading_text = heading_div.css("::text").get()
+                    if heading_text:
+                        current_section = clean_text(heading_text)
+                        if current_section not in specs:
+                            specs[current_section] = {}  # Initialize section if new
+
+                # Extract key/value (same logic as before)
+                key_list = row.css("span.att-title::text").getall()
+                value_list = row.css("span.att-value::text").getall()
+                key = clean_text(" ".join(key_list)) if key_list else None
+                value = clean_text(" ".join(value_list)) if value_list else None
+
+                if key and value:
+                    # Ensure the section exists before adding
+                    if current_section not in specs:
+                        specs[current_section] = {}
+                    specs[current_section][key] = value
+        # --- End Processing ---
+
         if specs:
             loader.add_value("specifications", specs)
         else:
-            self.logger.warning(f"No specifications dictionary extracted from {response.url}")
+            # This warning now means NONE of the known structures were found or parsed correctly
+            self.logger.warning(f"Could not extract specifications using any known structure from {response.url}")
+            # Add None explicitly so pipeline check sees it's missing vs empty dict
+            loader.add_value("specifications", None)
 
-        # --- Yield Item (No counter or limit check needed here) ---
         yield loader.load_item()
-        # Scrapy's CloseSpider extension will handle stopping the spider
 
     def handle_error(self, failure):
         """Logs errors during request processing."""

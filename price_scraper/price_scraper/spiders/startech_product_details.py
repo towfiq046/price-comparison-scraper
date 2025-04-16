@@ -143,15 +143,25 @@ class StartechProductDetailsSpider(scrapy.Spider):
         loader.add_value("url", response.url)
         loader.add_value("category", category_name)
         # 1. First try to get the price from the main price element
-        loader.add_css('price', 'td.product-price::text')
+        loader.add_css("price", "td.product-price::text")
         # 2. If price not found then try to get it from ins element
-        loader.add_css('price', 'td.product-price ins::text')
+        loader.add_css("price", "td.product-price ins::text")
         loader.add_css("regular_price", "td.product-regular-price::text")
         loader.add_css("product_code", "td.product-code::text")
         loader.add_css("brand", "td.product-brand::text")
         loader.add_css("availability", "td.product-status::text")
         loader.add_css("key_features", "div.short-description ul li:not(.view-more)::text")
         loader.add_css("image_urls", 'meta[itemprop="image"]::attr(content)')
+
+        # --- Extract Description HTML ---
+        description_html_content = response.css("section#description div.full-description").get()
+        if description_html_content:
+            loader.add_value("description_html", description_html_content)
+        else:
+            self.logger.debug(
+                f"No description section ('section#description div.full-description') found on {response.url}"
+            )
+        # --- END Description Extraction ---
 
         # --- Parse Specifications Table ---
         specs = {}

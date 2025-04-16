@@ -45,6 +45,15 @@ NEWSPIDER_MODULE = "price_scraper.spiders"
 ROBOTSTXT_OBEY = True
 LOG_LEVEL = "DEBUG"
 LOG_ENABLED = True
+# Define the log file path
+# LOG_FILE = "output/scrapy_run.log"  # Log file will be in the 'output' directory
+
+# Set to False to overwrite the log file each time, True to append
+# LOG_FILE_APPEND = False
+
+# Standard log format for files (adjust as needed)
+# LOG_FORMAT = "%(asctime)s [%(name)s] %(levelname)s: %(message)s"
+# LOG_DATEFORMAT = "%Y-%m-%d %H:%M:%S"  # Consistent date format
 COOKIES_ENABLED = False
 TELNETCONSOLE_ENABLED = False
 # --- End Core Scrapy Settings ---

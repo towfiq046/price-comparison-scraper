@@ -14,6 +14,13 @@ def clean_text(text):
     return text
 
 
+def clean_html_whitespace(html_string):
+    """Removes leading/trailing whitespace from an HTML string."""
+    if html_string and isinstance(html_string, str):
+        return html_string.strip()
+    return html_string
+
+
 def parse_price(text):
     """Extracts numerical price, removing any non-digit/non-decimal characters."""
     if not text:
@@ -83,6 +90,11 @@ class RyansProductDetailItem(scrapy.Item):
         output_processor=Identity(),
     )
 
+    description_html = scrapy.Field(
+        input_processor=MapCompose(clean_html_whitespace),
+        output_processor=TakeFirst(),
+    )
+
     # --- Media ---
     image_urls = scrapy.Field(
         input_processor=MapCompose(str.strip),
@@ -99,9 +111,7 @@ class StartechProductDetailItem(scrapy.Item):
     # --- Core Product Info ---
     name = scrapy.Field(input_processor=MapCompose(remove_tags, clean_text), output_processor=TakeFirst())
     url = scrapy.Field(output_processor=TakeFirst())
-    category = scrapy.Field(
-        input_processor=MapCompose(clean_text), output_processor=TakeFirst()
-    )
+    category = scrapy.Field(input_processor=MapCompose(clean_text), output_processor=TakeFirst())
     brand = scrapy.Field(input_processor=MapCompose(clean_text), output_processor=TakeFirst())
     product_code = scrapy.Field(  # Startech uses 'Product Code'
         input_processor=MapCompose(clean_text), output_processor=TakeFirst()
@@ -121,12 +131,16 @@ class StartechProductDetailItem(scrapy.Item):
     availability = scrapy.Field(input_processor=MapCompose(clean_text), output_processor=TakeFirst())
 
     # --- Features/Specifications ---
-    specifications = scrapy.Field(
-        output_processor=TakeFirst()
-    )
+    specifications = scrapy.Field(output_processor=TakeFirst())
     key_features = scrapy.Field(
         input_processor=MapCompose(clean_text),
         output_processor=Identity(),
+    )
+
+    # --- Description ---
+    description_html = scrapy.Field(
+        input_processor=MapCompose(clean_html_whitespace),
+        output_processor=TakeFirst(),
     )
 
     # --- Media ---
